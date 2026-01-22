@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# PyInstaller (Pastas de build)
+build/
+dist/
+*.spec
+
+# Configurações do Agente (Não subir a config da sua máquina)
+config.json
+
+# IDE
+.vscode/
+.idea/

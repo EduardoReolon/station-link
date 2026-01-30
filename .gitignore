@@ -1,18 +1,51 @@
-# Python
+# ========================
+# 1. SEGURANÇA (CRÍTICO)
+# ========================
+# Chaves privadas NUNCA devem subir para o GitHub
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Nome específico do arquivo gerado
+station_identity.key
+
+# Variáveis de ambiente
+.env
+.env.local
+
+# ========================
+# 2. CONFIGURAÇÃO LOCAL
+# ========================
+# O arquivo JSON guarda a impressora local e configs da máquina.
+station_config.json
+config.json
+
+# ========================
+# 3. PYTHON & AMBIENTE
+# ========================
+# Bytecode compilado (lixo)
 __pycache__/
 *.py[cod]
 *$py.class
-venv/
-.env
 
-# PyInstaller (Pastas de build)
+# Ambientes Virtuais (pesados e locais)
+venv/
+env/
+.venv/
+
+# ========================
+# 4. BUILD (PYINSTALLER)
+# ========================
+# Pastas geradas durante a compilação do .exe
 build/
 dist/
-*.spec
 
-# Configurações do Agente (Não subir a config da sua máquina)
-config.json
-
-# IDE
+# ========================
+# 5. IDE & SISTEMA
+# ========================
 .vscode/
 .idea/
+*.log
+Thumbs.db
+.DS_Store

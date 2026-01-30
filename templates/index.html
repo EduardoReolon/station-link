@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Station Link - Configuração</title>
+    <style>
+        :root {
+            --primary: #007bff;
+            --bg: #f4f6f9;
+            --card: #ffffff;
+            --text: #333;
+            --success: #28a745;
+            --warning: #ffc107;
+            --danger: #dc3545;
+            --gray: #6c757d;
+        }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; display: flex; justify-content: center; }
+        .container { width: 100%; max-width: 480px; }
+        
+        /* CARD PRINCIPAL */
+        .card { background: var(--card); border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); overflow: hidden; }
+        .card-header { padding: 20px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+        .card-body { padding: 25px; }
+        
+        h1 { margin: 0; font-size: 1.2rem; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+        
+        /* FORMULÁRIO DE IMPRESSORA */
+        label { display: block; margin-bottom: 8px; font-weight: 500; font-size: 0.9rem; color: var(--gray); }
+        select { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 1rem; margin-bottom: 20px; outline: none; transition: border 0.2s; background: #fff; }
+        select:focus { border-color: var(--primary); }
+        
+        .btn-group { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        button { border: none; padding: 12px; border-radius: 8px; font-weight: 600; cursor: pointer; transition: opacity 0.2s; font-size: 0.95rem; }
+        button:hover { opacity: 0.9; }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-secondary { background: #e9ecef; color: var(--text); }
+
+        /* MENSAGEM DE STATUS */
+        #msg { margin-top: 15px; padding: 12px; border-radius: 8px; font-size: 0.9rem; display: none; text-align: center; }
+        .msg-success { background: #d4edda; color: #155724; }
+        .msg-error { background: #f8d7da; color: #721c24; }
+
+        /* RODAPÉ DE SEGURANÇA (DISCRETO) */
+        .security-footer { background: #fafafa; padding: 15px 20px; border-top: 1px solid #eee; font-size: 0.85rem; cursor: pointer; transition: background 0.2s; }
+        .security-footer:hover { background: #f0f0f0; }
+        .security-badge { display: flex; align-items: center; justify-content: space-between; }
+        .badge-status { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+        
+        /* ÁREA DE DETALHES (ESCONDIDA) */
+        #security-details { display: none; margin-top: 15px; padding-top: 15px; border-top: 1px dashed #ddd; }
+        .detail-row { margin-bottom: 8px; }
+        .detail-label { font-size: 0.75rem; text-transform: uppercase; color: var(--gray); font-weight: bold; letter-spacing: 0.5px; }
+        .detail-value { font-family: monospace; background: #e9ecef; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; word-break: break-all; display: block; margin-top: 4px; color: #444; }
+
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <div class="card">
+            <div class="card-header">
+                <h1>🖨️ Station Link</h1>
+                <span style="font-size: 0.8rem; color: #999;">v2.1</span>
+            </div>
+
+            <div class="card-body">
+                <label for="impressoras">Impressora de Cupom / Padrão</label>
+                <select id="impressoras">
+                    <option>Carregando impressoras...</option>
+                </select>
+
+                <div class="btn-group">
+                    <button class="btn-secondary" onclick="teste('raw')">✂️ Testar Cupom</button>
+                    <button class="btn-primary" onclick="salvar()">💾 Salvar Padrão</button>
+                </div>
+                
+                <div id="msg"></div>
+            </div>
+
+            <div class="security-footer" onclick="toggleSecurity()">
+                <div class="security-badge">
+                    <div class="badge-status">
+                        <span class="dot" id="sec-dot"></span>
+                        <span id="sec-text">Carregando Segurança...</span>
+                    </div>
+                    <span style="color: #999;">▼</span>
+                </div>
+
+                <div id="security-details">
+                    <div class="detail-row">
+                        <div class="detail-label">Nível de Proteção</div>
+                        <div class="detail-value" id="sec-source">-</div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Machine Fingerprint</div>
+                        <div class="detail-value" id="sec-fp">-</div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Chave Pública (Início)</div>
+                        <div class="detail-value" id="sec-key">-</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API = 'http://localhost:4321';
+        let securityData = {};
+
+        async function init() {
+            // 1. Carrega Impressoras
+            try {
+                const res = await fetch(`${API}/api/printers`);
+                const data = await res.json();
+                const sel = document.getElementById('impressoras');
+                sel.innerHTML = '';
+                
+                if (data.available.length === 0) {
+                    sel.innerHTML = '<option>Nenhuma impressora encontrada</option>';
+                }
+
+                data.available.forEach(p => {
+                    let opt = document.createElement('option');
+                    opt.value = p; 
+                    opt.text = p;
+                    if(p === data.selected) opt.selected = true;
+                    sel.appendChild(opt);
+                });
+            } catch(e) { 
+                mostrarMsg('Erro ao conectar com o serviço local.', 'error');
+            }
+
+            // 2. Carrega Dados de Segurança (Background)
+            try {
+                const resSec = await fetch(`${API}/identity`);
+                securityData = await resSec.json();
+                renderSecurity();
+            } catch(e) {
+                console.error("Erro ao carregar segurança", e);
+            }
+        }
+
+        function renderSecurity() {
+            const dot = document.getElementById('sec-dot');
+            const text = document.getElementById('sec-text');
+            const source = document.getElementById('sec-source');
+            const fp = document.getElementById('sec-fp');
+            const key = document.getElementById('sec-key');
+
+            fp.innerText = securityData.fingerprint;
+            key.innerText = securityData.public_key.substring(26, 60) + "..."; // Só um trecho
+
+            if (securityData.security_source === 'HARDWARE_TPM') {
+                dot.style.background = '#28a745'; // Verde
+                text.innerText = "Ambiente Protegido (TPM)";
+                text.style.color = '#155724';
+                source.innerText = "HARDWARE (TPM 2.0)";
+            } else {
+                dot.style.background = '#fd7e14'; // Laranja
+                text.innerText = "Identidade por Software";
+                text.style.color = '#666';
+                source.innerText = "SOFTWARE (Arquivo Local Protegido)";
+            }
+        }
+
+        function toggleSecurity() {
+            const details = document.getElementById('security-details');
+            if (details.style.display === 'block') {
+                details.style.display = 'none';
+            } else {
+                details.style.display = 'block';
+            }
+        }
+
+        async function salvar() {
+            const printer = document.getElementById('impressoras').value;
+            await fetch(`${API}/api/config`, {
+                method: 'POST', 
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({printer_name: printer})
+            });
+            mostrarMsg('Impressora padrão salva com sucesso!', 'success');
+        }
+
+        async function teste(tipo) {
+            const printer = document.getElementById('impressoras').value;
+            const raw = "TESTE DE MESA\\nStation Link v2.0\\n------------------\\nImpressora: " + printer + "\\n\\n\\n" + String.fromCharCode(27, 109);
+            
+            try {
+                const res = await fetch(`${API}/print`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({type: tipo, content: raw, printer: printer})
+                });
+                const d = await res.json();
+                if(d.status === 'ok') mostrarMsg('Comando enviado para a impressora.', 'success');
+                else mostrarMsg('Erro: ' + d.error, 'error');
+            } catch(e) { mostrarMsg('Erro de conexão', 'error'); }
+        }
+
+        function mostrarMsg(txt, tipo) {
+            const div = document.getElementById('msg');
+            div.innerText = txt; 
+            div.className = tipo === 'success' ? 'msg-success' : 'msg-error';
+            div.style.display = 'block';
+            setTimeout(() => div.style.display = 'none', 4000);
+        }
+
+        init();
+    </script>
+</body>
+</html>

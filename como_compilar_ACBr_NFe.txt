@@ -1,0 +1,67 @@
+================================================================================
+COMPILACAO MANUAL DA ACBrLib NFE (64 BITS)
+================================================================================
+Motivo: Evitar o instalador oficial (que costuma dar dor de cabeca com dependencias) 
+e compilar a DLL diretamente na IDE do Lazarus para uso em Python/Node.
+
+PASSO 1: PREPARAR O AMBIENTE (Lazarus)
+--------------------------------------------------------------------------------
+1. Baixe e instale a versao mais recente do Lazarus (64 bits) para Windows:
+   Link: https://www.lazarus-ide.org/index.php
+   (Pode fazer a instalacao padrao: Next, Next, Finish).
+
+PASSO 2: BAIXAR OS CODIGOS-FONTE (Git)
+--------------------------------------------------------------------------------
+Crie uma pasta para seus codigos (ex: C:\codes\ACBr_Build) e abra o terminal nela.
+Rode os dois comandos abaixo para clonar o ACBr e o gerador de relatorios (Fortes):
+
+git clone https://github.com/frones/ACBr.git
+git clone https://github.com/fortesinformatica/fortesreport-ce.git
+
+PASSO 3: COMPILAR OS PACOTES BASE ("O Jeito Raiz")
+--------------------------------------------------------------------------------
+A DLL da NFe exige varios pacotes menores para funcionar (internet, criptografia, PDF).
+Em vez de usar o instalador automatico, vamos ensinar o Lazarus onde eles estao.
+
+Como fazer:
+No Lazarus, va em "Pacote" -> "Abrir arquivo de pacote (.lpk)...".
+Abra o arquivo, clique no botao "Compilar" e feche a janela.
+Repita isso na ORDEM EXATA abaixo (para um pacote nao quebrar o outro):
+
+1. ACBr\Pacotes\Lazarus\synapse\ACBr_synapse.lpk
+2. ACBr\Pacotes\Lazarus\ACBrComum\ACBr_Comum.lpk
+3. ACBr\Pacotes\Lazarus\ACBrDiversos\ACBr_Diversos.lpk
+4. ACBr\Pacotes\Lazarus\ACBrOpenSSL\ACBr_OpenSSL.lpk
+5. ACBr\Pacotes\Lazarus\ACBrTCP\ACBr_TCP.lpk
+6. ACBr\Pacotes\Lazarus\ACBrTXT\ACBr_TXTComum.lpk
+7. ACBr\Pacotes\Lazarus\ACBrPCN\ACBr_PCNComum.lpk
+8. ACBr\Pacotes\Lazarus\ACBrDFe\ACBr_DFeComum.lpk
+9. ACBr\Pacotes\Lazarus\ACBrDFe\ACBrNFe\ACBr_NFe.lpk
+10. ACBr\Pacotes\Lazarus\ACBrDFe\ACBrNFe\DANFE\NFe\FPDF\ACBr_NFe_DanfeFPDF.lpk
+11. fortesreport-ce\Packages\frce.lpk
+
+*Obs: Se no futuro a DLL reclamar de algum outro pacote faltando, basta procura-lo 
+na pasta ACBr\Pacotes e compilar da mesma forma.*
+
+PASSO 4: COMPILAR A DLL FINAL (64 BITS - MULTI-THREAD)
+--------------------------------------------------------------------------------
+Com a base pronta, agora vamos gerar o motor da NFe:
+
+1. No Lazarus, va em "Projeto" -> "Abrir Projeto...".
+2. Navegue ate: ACBr\Projetos\ACBrLib\Fontes\NFe\
+3. Abra o arquivo "ACBrLibNFE.lpi".
+4. Va em "Projeto" -> "Opcoes do Projeto..." -> "Opcoes do Compilador".
+5. No topo da tela, clique na caixa "Modo de Construcao" (Build Mode).
+6. Selecione a opcao: "Win64-x86_64-CDECL-MT" (Essencial para Python/Node e Multi-Thread).
+7. Clique em OK e aperte as teclas [ SHIFT + F9 ] para Construir.
+
+PASSO 5: ONDE ESTA A DLL?
+--------------------------------------------------------------------------------
+Apos alguns minutos, a aba de Mensagens (rodape do Lazarus) deve mostrar "Sucesso".
+O caminho exato de onde a DLL foi salva aparecera em verde.
+
+Geralmente, ela sera cuspida em:
+ACBr\Projetos\ACBrLib\bin\Windows\Cdecl\x86_64\ACBrNFe64.dll
+
+Pegue esse arquivo .dll e coloque junto do seu script Python ou backend. Fim!
+================================================================================

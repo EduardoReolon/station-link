@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['station_link.py'],
+    ['src\\main.py'],
     pathex=[],
     binaries=[],
-    datas=[('templates', 'templates')],
+    datas=[('src\\templates', 'templates')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

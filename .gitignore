@@ -20,6 +20,7 @@ station_identity.key
 # O arquivo JSON guarda a impressora local e configs da máquina.
 station_config.json
 config.json
+ACBrLib.ini
 
 # ========================
 # 3. PYTHON & AMBIENTE
@@ -49,3 +50,4 @@ dist/
 *.log
 Thumbs.db
 .DS_Store
+logs/

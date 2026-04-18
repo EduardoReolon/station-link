@@ -13,6 +13,7 @@ venv\Scripts\python.exe -m pip install -r requirements.txt
 echo Gerando EXE com PyInstaller...
 venv\Scripts\pyinstaller.exe --noconsole --onefile ^
             --add-data "src\templates;templates" ^
+            --add-data "src\core\acbr;core\acbr" ^
             --name "StationLink" ^
             src\main.py
 

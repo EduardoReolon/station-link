@@ -15,7 +15,7 @@ PASSO 2: BAIXAR OS CODIGOS-FONTE (Git)
 Crie uma pasta para seus codigos (ex: C:\codes\ACBr_Build) e abra o terminal nela.
 Rode os dois comandos abaixo para clonar o ACBr e o gerador de relatorios (Fortes):
 
-git clone https://github.com/frones/ACBr.git
+git clone https://github.com/ProjetoACBr/ACBr.git
 git clone https://github.com/fortesinformatica/fortesreport-ce.git
 
 PASSO 3: COMPILAR OS PACOTES BASE ("O Jeito Raiz")

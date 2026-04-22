@@ -51,6 +51,7 @@ def config_printer():
 def print_job():
     data = request.json
     ptype = data.get('type', 'raw')
+    qr_code_url = data.get('qr_code_url', '')
     content = data.get('content', '')
     printer = data.get('printer', printer_mgr.get_config().get("printer_name"))
     
@@ -59,7 +60,7 @@ def print_job():
     if ptype == 'file':
         ok, msg = printer_mgr.print_file(content, printer)
     else:
-        ok, msg = printer_mgr.print_raw(content, printer)
+        ok, msg = printer_mgr.print_raw(content, qr_code_url, printer)
         
     return jsonify({"status": "ok" if ok else "error", "error": msg if not ok else None}), 200 if ok else 500
 

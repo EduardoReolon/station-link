@@ -4,7 +4,13 @@ pystray
 Pillow
 pyinstaller
 cryptography
+pynfe
+lxml
+signxml
+pyOpenSSL
+requests
+tzdata
+python-escpos
 
-# Dependências condicionais (O segredo está aqui)
 pywin32; sys_platform == 'win32'
 pycups; sys_platform == 'linux'

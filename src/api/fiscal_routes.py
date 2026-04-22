@@ -1,7 +1,10 @@
+import ctypes
 import json
 import os
+import sys
 from flask import Blueprint, jsonify, request
-from core.acbr_service import acbr_instance
+from core.pynfe.eventos import CCeBuilder, CancelamentoBuilder, InutilizacaoBuilder
+from core.pynfe.service import pynfe_service
 
 fiscal_bp = Blueprint('fiscal_bp', __name__)
 PENDING_FILE = os.path.join(os.getcwd(), 'logs', 'pendencias.json')
@@ -77,13 +80,6 @@ def init_station():
     """
     data = request.json
     try:
-        # 1. Inicializa a DLL (se ainda não foi)
-        res = acbr_instance.inicializar()
-        if res != 0:
-            return jsonify({"status": "error", "message": "Falha ao inicializar ACBrLib"}), 500
-        
-        acbr_instance.configurar_estacao()
-
         # 2. Guarda as empresas na memória
         for co in data.get('companies', []):
             COMPANIES_MEMORY_STORE[co['companyId']] = {
@@ -95,9 +91,18 @@ def init_station():
                 
                 # Mapeamento NOVO (para o gerador de INI ler o endereço e o nome)
                 "name": co.get('name', 'Razao Social Omitida'),
+                "nome_fantasia": co.get('nome_fantasia', 'Fantasia Omitida'),
                 "ie": co.get('ie', ''),
                 "crt": co.get('crt', 1),
-                "address": co.get('address', {})
+
+                "cscHomologacao": co.get('cscHomologacao', ''),
+                "idCscHomologacao": co.get('idCscHomologacao', ''),
+                "cscProducao": co.get('cscProducao', ''),
+                "idCscProducao": co.get('idCscProducao', ''),
+
+                "address": co.get('address', {}),
+                "developer": data.get('developer', {}),
+                "fiscalDefaults": co.get('fiscalDefaults', {})
             }
 
         return jsonify({
@@ -132,6 +137,7 @@ def emit_document():
         "number": 1542,         # NÚMERO SEQUENCIAL DEVE VIR PRONTO DO BACK (evita furos)
         "issueDate": "2026-04-13T11:00:00-03:00",
         "environment": 1,         # 1 = Produção, 2 = Homologação (SEFAZ)
+        "tipoSaida": True,         # False é para devolução de compra do cliente
         "autoPrint": True,          # Se true, o ACBr já imprime automaticamente após a emissão (NFCe ou NFe em contingência)
 
         "customer": {
@@ -177,6 +183,17 @@ def emit_document():
                 "icmsRate": 18.00,
                 "icmsValue": 3.60,
                 "icmsStValue": 0.00,
+
+                // PIS / COFINS (OBRIGATÓRIO NO XML, mande 0 se não incidir)
+                "cstPis": "01",
+                "pisBase": 20.00,
+                "pisRate": 1.65,
+                "pisValue": 0.33,
+                
+                "cstCofins": "01",
+                "cofinsBase": 20.00,
+                "cofinsRate": 7.60,
+                "cofinsValue": 1.52,
                 
                 // --- IMPOSTOS (Reforma Tributária) ---
                 "cstIbsCbs": "01",
@@ -196,7 +213,39 @@ def emit_document():
                 "value": 150.00,
                 "cardIndicator": 2 // 1 ou 2 (Apenas quando method for 03 ou 04)
             }
-        ]
+        ],
+        
+        // --- TRANSPORTE E FRETE (Obrigatório para NFe mod 55) ---
+        "freight": {
+            // 0=Remetente, 1=Destinatário, 2=Terceiros, 3=Próprio Rte, 4=Próprio Dest, 9=Sem Frete
+            "modFrete": 0, 
+
+            // Dados da Transportadora (Opcional se modFrete for 9)
+            "carrier": {
+                "document": "12345678000195", // CNPJ ou CPF (só números)
+                "name": "Expresso Logistica LTDA",
+                "ie": "123456789",
+                "address": {
+                    "zipcode": "80000000",
+                    "street": "Rua Exemplo",
+                    "number": "123",
+                    "district": "Centro",
+                    "city": "Curitiba",
+                    "state": "PR",
+                    "ibgeCode": "4106902"   // Opcional, mas recomendado para evitar rejeições da SEFAZ
+                }
+            },
+
+            // Volumes transportados
+            "volumes": [
+                {
+                    "quantity": 10,
+                    "species": "CAIXA", // Ex: CAIXA, PALETE, TAMBOR
+                    "netWeight": 50.500,  // Peso Líquido (kg)
+                    "grossWeight": 52.000 // Peso Bruto (kg)
+                }
+            ]
+        },
     }
     
     AÇÕES DO PYTHON / ACBr:
@@ -248,33 +297,23 @@ def emit_document():
     """
     payload = request.json
     company_id = payload.get('companyId')
-    auto_print = payload.get('autoPrint', False)
-    # Use um ID único que o frontend enviou, ou o próprio numero+serie da nota
-    transacao_id = payload.get('documentId', f"{company_id}-{payload.get('series', '0')}-{payload.get('number', '0')}")
+    transacao_id = payload.get('documentId', f"{company_id}-{payload.get('series')}-{payload.get('number')}")
     
     if company_id not in COMPANIES_MEMORY_STORE:
         return jsonify({"status": "error", "message": "Empresa não carregada na memória."}), 400
 
-    company_info = COMPANIES_MEMORY_STORE.get(company_id, {})
-    ambiente = payload.get('environment', 2)
+    company_info = COMPANIES_MEMORY_STORE.get(company_id)
 
     try:
-        # 1. Troca o certificado e ambiente na DLL para esta emissão
-        acbr_instance.preparar_empresa(company_info, ambiente)
+        # A lógica passa inteira para o nosso service do PyNFe
+        resultado = pynfe_service.emitir_nota(company_info, payload)
         
-        # 2. Converte o JSON do NestJS para INI
-        ini_string = acbr_instance.converter_json_para_ini(company_info, payload)
-
-        # 3. Executa a emissão
-        resultado = acbr_instance.emitir_nota(ini_string, company_id=company_id, auto_print=auto_print)
-
-        # GRAVA EM DISCO ANTES DE DEVOLVER (O Failsafe)
+        # Salva o fail-safe em disco igual você fazia
         salvar_pendencia(transacao_id, resultado)
         
         return jsonify(resultado)
 
     except Exception as e:
-        # Erro grave de execução (não erro da SEFAZ)
         return jsonify({"status": "error", "message": str(e)}), 500
 
 """
@@ -323,15 +362,31 @@ def correction_letter():
 
     try:
         company_info = COMPANIES_MEMORY_STORE[company_id]
-        acbr_instance.preparar_empresa(company_info, payload.get('environment', 2))
         
-        resultado = acbr_instance.carta_correcao(
-            access_key=payload.get('accessKey'),
-            justification=payload.get('correctionText'),
-            cnpj=company_info['cnpj'],
-            sequence=payload.get('sequence', 1)
-        )
-        return jsonify(resultado)
+        # Traduz o payload do NestJS para o que o CCeBuilder espera
+        payload_evento = {
+            "environment": payload.get('environment', 2),
+            "chave": payload.get('accessKey'),
+            "sequencia": payload.get('sequence', 1),
+            "correcao": payload.get('correctionText')
+        }
+        
+        resultado = pynfe_service.processar_evento(company_info, payload_evento, CCeBuilder)
+        
+        # Se a validação Fail Fast falhar, ela já devolve o erro formatado
+        if resultado.get('status') == 'error':
+            return jsonify(resultado), 400
+
+        # Formata a saída exatamente como o NestJS espera
+        is_authorized = resultado.get('status') == 'authorized'
+        retorno_nest = {
+            "status": "AUTHORIZED" if is_authorized else "REJECTED",
+            "protocol": resultado.get('protocol', ''),
+            "xmlBase64": resultado.get('xmlBase64', ''),
+            "sefaz": resultado.get('sefaz', {})
+        }
+        
+        return jsonify(retorno_nest)
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -367,61 +422,95 @@ def cancel_document():
 
     try:
         company_info = COMPANIES_MEMORY_STORE[company_id]
-        acbr_instance.preparar_empresa(company_info, payload.get('environment', 2))
         
-        resultado = acbr_instance.cancelar_documento(
-            access_key=payload.get('accessKey'),
-            justification=payload.get('justification'),
-            cnpj=company_info['cnpj']
-        )
-        return jsonify(resultado)
+        # Traduz o payload do NestJS para o que o CancelamentoBuilder espera
+        payload_evento = {
+            "environment": payload.get('environment', 2),
+            "chave": payload.get('accessKey'),
+            "protocolo": payload.get('protocol'),
+            "justificativa": payload.get('justification')
+        }
+        
+        resultado = pynfe_service.processar_evento(company_info, payload_evento, CancelamentoBuilder)
+        
+        if resultado.get('status') == 'error':
+            return jsonify(resultado), 400
+
+        # Formata a saída com os nomes de variáveis específicos do Cancelamento (conforme sua docstring)
+        is_canceled = resultado.get('status') == 'authorized'
+        retorno_nest = {
+            "status": "CANCELED" if is_canceled else "REJECTED",
+            "cancelProtocol": resultado.get('protocol', ''),
+            "cancelXmlBase64": resultado.get('xmlBase64', ''),
+            "sefaz": resultado.get('sefaz', {})
+        }
+        
+        return jsonify(retorno_nest)
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@fiscal_bp.route('/api/fiscal/print', methods=['POST'])
-def print_fiscal_document():
+@fiscal_bp.route('/api/fiscal/inutilization', methods=['POST'])
+def inutilization_document():
     """
-    ROTA DE IMPRESSÃO / REIMPRESSÃO (NFe, NFCe, Canc, CC-e)
-    
-    O ACBr carrega o XML em memória e envia para o spooler do Windows, 
-    renderizando o DANFE perfeito.
+    ROTA DE INUTILIZAÇÃO DE NUMERAÇÃO
     
     PAYLOAD ESPERADO DO NESTJS:
     {
-        "companyId": "uuid-da-empresa", # Para carregar configs de margem/logo
-        "xmlBase64": "...",             # O XML completo autorizado salvo no seu banco
-        "documentType": "NFE",          # Opções: "NFE", "NFCE", "CCE", "CANCELAMENTO"
-        "printerName": "Nome da Impressora" # (Opcional) Se null, usa a padrão configurada
+        "companyId": "uuid",
+        "environment": 2,
+        "year": "23",           # 2 últimos dígitos do ano
+        "model": "65",          # 55 ou 65
+        "series": "1",
+        "initialNumber": 100,
+        "finalNumber": 105,
+        "justification": "Quebra de sequencia por queda de energia" # Mínimo 15 caracteres
     }
     
     RETORNO PARA O NESTJS:
     {
-        "status": "ok",
-        "message": "Enviado para a fila de impressão"
+        "status": "INUTILIZED", // ou REJECTED
+        "protocol": "141...",
+        "xmlBase64": "...",
+        "sefaz": {
+            "cStat": 102,
+            "message": "Inutilizacao de numero homologada"
+        }
     }
     """
     payload = request.json
     company_id = payload.get('companyId')
     
     if company_id not in COMPANIES_MEMORY_STORE:
-         return jsonify({"status": "error", "message": "Empresa não encontrada."}), 400
+        return jsonify({"status": "error", "message": "Empresa não carregada."}), 400
 
     try:
-        # Prepara configs (logo, margens atreladas à empresa)
-        acbr_instance.preparar_empresa(COMPANIES_MEMORY_STORE[company_id], 2)
+        company_info = COMPANIES_MEMORY_STORE[company_id]
         
-        resultado_impressao = acbr_instance.imprimir_documento(
-            xml_string=payload.get('xmlBase64'), # Decodificar base64 aqui se necessário
-            doc_type=payload.get('documentType'),
-            return_pdf=payload.get('returnPdf', False),
-            printer_name=payload.get('printerName')
-        )
+        # Traduz o payload do NestJS para o InutilizacaoBuilder
+        payload_evento = {
+            "environment": payload.get('environment', 2),
+            "ano": payload.get('year'),
+            "modelo": payload.get('model'),
+            "serie": payload.get('series'),
+            "numeroInicial": payload.get('initialNumber'),
+            "numeroFinal": payload.get('finalNumber'),
+            "justificativa": payload.get('justification')
+        }
         
-        if payload.get('returnPdf'):
-            return jsonify({"status": "ok", "pdfBase64": resultado_impressao})
-            
-        return jsonify({"status": "ok", "message": "Enviado para impressão."})
+        resultado = pynfe_service.processar_evento(company_info, payload_evento, InutilizacaoBuilder)
+        
+        if resultado.get('status') == 'error':
+            return jsonify(resultado), 400
 
+        is_inutilized = resultado.get('status') == 'authorized'
+        retorno_nest = {
+            "status": "INUTILIZED" if is_inutilized else "REJECTED",
+            "protocol": resultado.get('protocol', ''),
+            "xmlBase64": resultado.get('xmlBase64', ''),
+            "sefaz": resultado.get('sefaz', {})
+        }
+        
+        return jsonify(retorno_nest)
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -465,14 +554,25 @@ def transmit_contingency():
         return jsonify({"status": "error", "message": "Empresa não carregada."}), 400
 
     try:
-        acbr_instance.preparar_empresa(COMPANIES_MEMORY_STORE[company_id], 1) # Transmissão é sempre ambiente prod/homol atual
+        company_info = COMPANIES_MEMORY_STORE[company_id]
         
-        resultado = acbr_instance.transmitir_contingencia(
-            xml_base64=payload.get('xmlBase64'),
-            company_id=company_id,
-            auto_print=payload.get('autoPrint', False)
-        )
-        return jsonify(resultado)
+        # Aciona o serviço para transmitir o XML offline já assinado
+        resultado = pynfe_service.transmitir_contingencia(company_info, payload)
+        
+        # Caso a validação de dados falhe antes do envio
+        if resultado.get('status') == 'error':
+            return jsonify(resultado), 400
+
+        is_authorized = resultado.get('status') == 'authorized'
+        
+        # Retorno formatado conforme o contrato do NestJS
+        return jsonify({
+            "status": "AUTHORIZED" if is_authorized else "REJECTED",
+            "protocol": resultado.get('protocol', ''),
+            "xmlBase64": resultado.get('xmlBase64', ''),
+            "sefaz": resultado.get('sefaz', {})
+        })
+        
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 

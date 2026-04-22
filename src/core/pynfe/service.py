@@ -255,11 +255,34 @@ class PyNFEService:
                         }
                     }
                 else:
-                    # REJEIÇÃO SEFAZ (Erro de regra de negócio, NCM inválido, etc)
-                    # Note que rejeição NÃO entra em contingência. O usuário deve corrigir o erro.
+                    # REJEIÇÃO SEFAZ
                     response_bruto = resposta[1] if isinstance(resposta, tuple) else resposta
                     retorno_erro = self._parse_sefaz_response(response_bruto)
+                    cStat_erro = int(retorno_erro.get('cStat') or 0)
                     
+                    # ----------------------------------------------------
+                    # AQUI ENTRA A INTERCEPTAÇÃO DO ERRO 204
+                    # ----------------------------------------------------
+                    if cStat_erro == 204:
+                        print(f"\n[i] Duplicidade detectada (204). Tentando resgatar XML da Sefaz...")
+                        ns = {"ns": "http://www.portalfiscal.inf.br/nfe"}
+                        chave_gerada = xml_pronto.xpath("//ns:chNFe", namespaces=ns)[0].text
+                        
+                        resultado_resgate = self.resgatar_xml_sefaz(
+                            comunicacao=comunicacao,
+                            chave_nfe=chave_gerada,
+                            xml_arvore=xml_pronto,
+                            modelo_label=modelo_label,
+                            totais=totais_finais
+                        )
+                        
+                        # Se o resgate não der erro de código, devolvemos ele em vez da rejeição
+                        if resultado_resgate.get("status") != "error":
+                            return resultado_resgate
+
+                    # ----------------------------------------------------
+                    # Se não for 204, ou se o resgate falhar, segue o baile de rejeição normal
+                    # ----------------------------------------------------
                     return {
                         "status": "rejected",
                         "accessKey": "",
@@ -267,7 +290,7 @@ class PyNFEService:
                         "xmlBase64": "",
                         "totals": {},
                         "sefaz": {
-                            "cStat": int(retorno_erro.get('cStat') or 0),
+                            "cStat": cStat_erro,
                             "message": retorno_erro.get('xMotivo', 'Erro na comunicação com a Sefaz')
                         }
                     }
@@ -276,6 +299,75 @@ class PyNFEService:
             import traceback
             traceback.print_exc()
             raise Exception(f"Falha na emissão: {str(e)}")
+
+    def resgatar_xml_sefaz(self, comunicacao: ComunicacaoSefaz, chave_nfe, xml_arvore, modelo_label, totais):
+        """
+        Consulta uma nota já existente na SEFAZ e anexa o protocolo ao XML local.
+        Ideal para recuperar o XML completo após um erro 204 (Duplicidade).
+        """
+        try:
+            retorno_consulta = comunicacao.consulta_nota(modelo=modelo_label, chave=chave_nfe)
+            retorno_dict = self._parse_sefaz_response(retorno_consulta)
+            
+            cStat = str(retorno_dict.get('cStat', ''))
+            
+            # 100 = Autorizado, 150 = Autorizado fora do prazo (comum em contingência offline atrasada)
+            if cStat in ['100', '150']:
+                # A mágica acontece aqui: junta o XML assinado que você tinha com o retorno da Sefaz
+                # 1. Converte o texto da resposta da Sefaz em árvore XML
+                arvore_consulta = etree.fromstring(retorno_consulta.content)
+                ns = {"ns": "http://www.portalfiscal.inf.br/nfe"}
+                
+                # 2. Caça a tag <protNFe> (Protocolo) dentro da resposta
+                protocolo = arvore_consulta.xpath("//ns:protNFe", namespaces=ns)
+                
+                if protocolo:
+                    # 3. Cria o envelope definitivo <nfeProc> exigido por lei
+                    nfe_proc = etree.Element("{http://www.portalfiscal.inf.br/nfe}nfeProc", versao="4.00")
+                    
+                    # 4. Coloca a sua Nota Assinada e o Protocolo dentro do envelope
+                    nfe_proc.append(xml_arvore)
+                    nfe_proc.append(protocolo[0])
+                    
+                    # 5. Gera os bytes finais do XML Autorizado
+                    xml_autorizado_bytes = etree.tostring(nfe_proc, encoding='utf-8')
+                else:
+                    raise Exception("A SEFAZ retornou autorizado, mas ocultou a tag protNFe.")
+                
+                xml_final_base64 = base64.b64encode(xml_autorizado_bytes).decode('utf-8')
+                
+                return {
+                    "status": "authorized",
+                    "accessKey": chave_nfe,
+                    "protocol": retorno_dict.get('nProt', ''),
+                    "xmlBase64": xml_final_base64,
+                    "totals": {
+                        "totalProducts": float(totais.get('vProd', 0)),
+                        "totalDocument": float(totais.get('vNF', 0))
+                    },
+                    "sefaz": {
+                        "cStat": int(cStat),
+                        "message": f"Nota recuperada com sucesso (Sefaz: {retorno_dict.get('xMotivo')})"
+                    }
+                }
+            else:
+                # A nota existe lá, mas está cancelada, denegada, etc. Retorna o status real dela.
+                return {
+                    "status": "rejected",
+                    "accessKey": chave_nfe,
+                    "protocol": "",
+                    "xmlBase64": "",
+                    "totals": {},
+                    "sefaz": {
+                        "cStat": int(cStat) if cStat.isdigit() else 0,
+                        "message": f"Não foi possível recuperar a nota: {retorno_dict.get('xMotivo')}"
+                    }
+                }
+        except Exception as e:
+            return {
+                "status": "error",
+                "sefaz": {"cStat": 0, "message": f"Falha ao tentar resgatar a nota: {str(e)}"}
+            }
 
     def transmitir_contingencia(self, company_info: dict, payload: dict):
         """

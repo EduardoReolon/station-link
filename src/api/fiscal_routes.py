@@ -1,3 +1,4 @@
+import base64
 import ctypes
 import json
 import os
@@ -8,6 +9,38 @@ from core.pynfe.service import pynfe_service
 
 fiscal_bp = Blueprint('fiscal_bp', __name__)
 PENDING_FILE = os.path.join(os.getcwd(), 'logs', 'pendencias.json')
+
+def salvar_xml_em_disco(company_id: str, access_key: str, xml_base64: str, event_type: str = None, sequence: str = None):
+    """
+    Salva o XML em base64 no disco físico.
+    Destino: storage/xmls/{companyId}/
+    """
+    if not xml_base64 or not access_key or not company_id:
+        return None
+
+    # Cria a estrutura de pastas storage/xmls/{companyId}
+    diretorio_destino = os.path.join(os.getcwd(), 'storage', 'xmls', str(company_id))
+    os.makedirs(diretorio_destino, exist_ok=True)
+
+    # Define o sufixo exatamente como na sua regra do NestJS
+    sufixo = ""
+    if event_type == "CANCELED":
+        sufixo = "-cancelamento"
+    elif event_type == "CCE":
+        sufixo = f"-cce-{sequence}" if sequence else "-cce"
+
+    nome_arquivo = f"{access_key}{sufixo}.xml"
+    caminho_completo = os.path.join(diretorio_destino, nome_arquivo)
+
+    # Decodifica e salva
+    try:
+        xml_bytes = base64.b64decode(xml_base64)
+        with open(caminho_completo, 'wb') as f:
+            f.write(xml_bytes)
+        return caminho_completo
+    except Exception as e:
+        print(f"Erro ao salvar XML no disco: {e}")
+        return None
 
 def salvar_pendencia(transacao_id, dados):
     """Grava o resultado em disco antes de responder ao front"""
@@ -310,6 +343,9 @@ def emit_document():
         
         # Salva o fail-safe em disco igual você fazia
         salvar_pendencia(transacao_id, resultado)
+
+        # Quando a nota for autorizada, basta chamar passando os dados
+        salvar_xml_em_disco(company_id, resultado['accessKey'], resultado['xmlBase64'])
         
         return jsonify(resultado)
 
@@ -380,11 +416,19 @@ def correction_letter():
         # Formata a saída exatamente como o NestJS espera
         is_authorized = resultado.get('status') == 'authorized'
         retorno_nest = {
-            "status": "AUTHORIZED" if is_authorized else "REJECTED",
+            "status": "authorized" if is_authorized else "rejected",
             "protocol": resultado.get('protocol', ''),
             "xmlBase64": resultado.get('xmlBase64', ''),
             "sefaz": resultado.get('sefaz', {})
         }
+
+        if is_authorized:
+            salvar_xml_em_disco(
+                company_id=company_id, 
+                access_key=payload.get('accessKey'), 
+                xml_base64=retorno_nest['xmlBase64'], 
+                event_type="CANCELED"
+            )
         
         return jsonify(retorno_nest)
     except Exception as e:
@@ -439,11 +483,19 @@ def cancel_document():
         # Formata a saída com os nomes de variáveis específicos do Cancelamento (conforme sua docstring)
         is_canceled = resultado.get('status') == 'authorized'
         retorno_nest = {
-            "status": "CANCELED" if is_canceled else "REJECTED",
+            "status": "canceled" if is_canceled else "rejected",
             "cancelProtocol": resultado.get('protocol', ''),
             "cancelXmlBase64": resultado.get('xmlBase64', ''),
             "sefaz": resultado.get('sefaz', {})
         }
+
+        if is_canceled:
+            salvar_xml_em_disco(
+                company_id=company_id, 
+                access_key=payload.get('accessKey'), 
+                xml_base64=retorno_nest['cancelXmlBase64'], 
+                event_type="CANCELED"
+            )
         
         return jsonify(retorno_nest)
     except Exception as e:
@@ -504,7 +556,7 @@ def inutilization_document():
 
         is_inutilized = resultado.get('status') == 'authorized'
         retorno_nest = {
-            "status": "INUTILIZED" if is_inutilized else "REJECTED",
+            "status": "inutilized" if is_inutilized else "rejected",
             "protocol": resultado.get('protocol', ''),
             "xmlBase64": resultado.get('xmlBase64', ''),
             "sefaz": resultado.get('sefaz', {})
@@ -567,7 +619,7 @@ def transmit_contingency():
         
         # Retorno formatado conforme o contrato do NestJS
         return jsonify({
-            "status": "AUTHORIZED" if is_authorized else "REJECTED",
+            "status": "authorized" if is_authorized else "rejected",
             "protocol": resultado.get('protocol', ''),
             "xmlBase64": resultado.get('xmlBase64', ''),
             "sefaz": resultado.get('sefaz', {})

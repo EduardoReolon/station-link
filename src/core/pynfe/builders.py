@@ -132,6 +132,14 @@ class NFeBuilder:
         document_id = self.payload.get('documentId')
         codigo_seguro = gerar_cnf_por_uuid(document_id)
 
+        if modelo == ModeloDocumento.NFCE:
+            # NFC-e é obrigatoriamente operação presencial/interna no estado
+            id_destino = 1
+        else:
+            # NF-e (55): Compara a UF da sua empresa com a UF do destinatário
+            uf_cliente = cliente_payload.get('uf', uf_empresa)
+            id_destino = 1 if uf_empresa == uf_cliente else 2
+
         nfe = NotaFiscal(
             uf=uf_empresa,
             municipio=municipio_empresa,
@@ -147,6 +155,7 @@ class NFeBuilder:
             indicador_presencial=1,
             finalidade_emissao='1',
             tipo_impressao_danfe=tipo_impressao,
+            indicador_destino=id_destino,
         )
 
         dev_info = self.company.get('developer', {})
@@ -184,38 +193,94 @@ class NFeBuilder:
 
     def _adicionar_destinatario(self, nfe: NotaFiscal):
         cliente_payload = self.payload.get('customer') or {}
+        modelo = str(self.payload.get('model', '65'))
+        nfe.cliente = Cliente()
+
+        ambiente = int(self.payload.get('environment', 2))
+        # REGRA DA SEFAZ (Erro 598): Em homologação, o nome do destinatário é fixo.
+        nome_cliente = cliente_payload.get('name', 'CONSUMIDOR')
+        if ambiente == 2:
+            nome_cliente = "NF-E EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL"
         
+        # =========================================================
+        # REGRA SEFAZ: Consumidor não identificado
+        # =========================================================
         if not cliente_payload.get('document'):
-            # Cliente Dummy para NFC-e anônima
+            if modelo == '55':
+                raise ValueError("Destinatário é obrigatório para emissão de NF-e (Modelo 55).")
+            
             nfe.cliente = Cliente(
-                razao_social='CONSUMIDOR',
+                razao_social=nome_cliente,
                 tipo_documento='CPF',
                 numero_documento='00000000000',
-                indicador_ie='9',
-                endereco_logradouro='Rua',
+                indicador_ie=9, # Inteiro!
+                endereco_logradouro='Não Informado',
                 endereco_numero='0',
-                endereco_bairro='Centro',
+                endereco_bairro='Não Informado',
                 endereco_municipio='Curitiba',
                 endereco_uf='PR',
-                endereco_cep='80000000'
+                endereco_cep='80000000',
+                endereco_pais='1058',
+                endereco_nome_pais='Brasil'
             )
             return
 
-        endereco = cliente_payload.get('address', {})
+        # Pega o endereço de forma segura (se for null, vira {})
+        endereco = cliente_payload.get('address') or {}
         documento = cliente_payload['document']
+
+        kwargs_endereco = {}
         
+        # Só preenchemos com os dados reais se o MÍNIMO OBRIGATÓRIO (Cidade e Estado) existir
+        if endereco.get('city') and endereco.get('state'):
+            mapa_endereco = {
+                'endereco_logradouro': 'street',
+                'endereco_numero': 'number',
+                'endereco_bairro': 'district',
+                'endereco_municipio': 'city',
+                'endereco_uf': 'state',
+                'endereco_cep': 'zipcode'
+            }
+            kwargs_endereco = {
+                chave_lib: str(endereco[chave_payload]) 
+                for chave_lib, chave_payload in mapa_endereco.items() 
+                if endereco.get(chave_payload) # Pula apenas os opcionais vazios
+            }
+            
+            # Força o país para garantir que a SEFAZ receba o código 1058
+            kwargs_endereco['endereco_pais'] = '1058'
+            kwargs_endereco['endereco_nome_pais'] = 'Brasil'
+            
+        else:
+            # Não tem endereço no Payload!
+            if modelo == '55':
+                # É NF-e: Endereço é obrigatório pela SEFAZ. Fail Fast!
+                raise ValueError("O endereço do destinatário é obrigatório para emissão de NF-e (Modelo 55).")
+            else:
+                # É NFC-e: SEFAZ permite só CPF, mas a pynfe exige preenchimento.
+                # Injetamos o endereço Dummy para a biblioteca não quebrar o IBGE e o Schema.
+                kwargs_endereco = {
+                    'endereco_logradouro': 'Não Informado',
+                    'endereco_numero': '0',
+                    'endereco_bairro': 'Não Informado',
+                    'endereco_municipio': 'Curitiba',
+                    'endereco_uf': 'PR',
+                    'endereco_cep': '80000000',
+                    'endereco_pais': '1058',
+                    'endereco_nome_pais': 'Brasil'
+                }
+
         nfe.cliente = Cliente(
-            razao_social=cliente_payload.get('name', 'CONSUMIDOR'),
+            razao_social=nome_cliente,
             tipo_documento='CPF' if len(documento) == 11 else 'CNPJ',
             numero_documento=documento,
-            indicador_ie=str(cliente_payload.get('indIEDest', 9)),
-            inscricao_estadual=cliente_payload.get('ie'),
-            endereco_logradouro=str(endereco.get('street', 'Rua')),
-            endereco_numero=str(endereco.get('number', '0')),
-            endereco_bairro=str(endereco.get('district', 'Bairro')),
-            endereco_municipio=str(endereco.get('city', 'Curitiba')),
-            endereco_uf=str(endereco.get('state', 'PR')),
-            endereco_cep=str(endereco.get('zipcode', '80000000')),
+            
+            # CORREÇÃO AQUI: Garantir que seja INTEIRO para a biblioteca avaliar o 'if == 9' corretamente
+            indicador_ie=int(cliente_payload.get('indIEDest', 9)),
+            
+            # Se indicador_ie for 9, a biblioteca nem tenta ler isso aqui, então a string vazia é perfeitamente segura.
+            inscricao_estadual=cliente_payload.get('ie', ''),
+            **kwargs_endereco
         )
 
     def _adicionar_itens(self, nfe: NotaFiscal) -> Decimal:

@@ -13,7 +13,61 @@ import requests
 
 from core.pynfe.builders import NFeBuilder, AmbienteEmissao, ModeloDocumento
 
-class PyNFEService:
+DICIONARIO_TAGS_NFE = {
+    "ide": "Identificação da NF-e",
+    "cUF": "Código da UF",
+    "cNF": "Código Numérico",
+    "natOp": "Natureza da Operação",
+    "mod": "Modelo do Documento Fiscal",
+    "serie": "Série do Documento",
+    "nNF": "Número da NF-e",
+    "dhEmi": "Data e Hora de Emissão",
+    "tpNF": "Tipo de Operação (0-Entrada, 1-Saída)",
+    "idDest": "Indicador de Destino da Operação",
+    "cMunFG": "Código do Município do Fato Gerador",
+    "tpImp": "Formato de Impressão do DANFE",
+    "tpEmis": "Tipo de Emissão (Normal, Contingência, etc)",
+    "tpAmb": "Ambiente (1-Produção, 2-Homologação)",
+    "finNFe": "Finalidade de Emissão da NF-e",
+    "indFinal": "Indicador de Consumidor Final",
+    "indPres": "Indicador de Presença do Comprador",
+    "CRT": "Código de Regime Tributário",
+    "CNPJ": "CNPJ",
+    "CPF": "CPF",
+    "IE": "Inscrição Estadual",
+    "xNome": "Razão Social ou Nome",
+    "xLgr": "Logradouro (Rua, Avenida, etc)",
+    "nro": "Número do Endereço",
+    "cMun": "Código do Município (IBGE)",
+    "UF": "Sigla da UF",
+    "CEP": "CEP",
+    "cProd": "Código do Produto",
+    "cEAN": "Código de Barras EAN",
+    "xProd": "Descrição do Produto",
+    "NCM": "Código NCM",
+    "CEST": "Código Especificador da Substituição Tributária",
+    "CFOP": "Código Fiscal de Operações e Prestações",
+    "uCom": "Unidade Comercial",
+    "qCom": "Quantidade Comercial",
+    "vUnCom": "Valor Unitário de Comercialização",
+    "vProd": "Valor Total Bruto dos Produtos",
+    "cEANTrib": "Código de Barras EAN Tributável",
+    "vFrete": "Valor do Frete",
+    "vDesc": "Valor do Desconto",
+    "orig": "Origem da Mercadoria",
+    "CST": "Código de Situação Tributária",
+    "CSOSN": "Código de Situação da Operação - Simples Nacional",
+    "vBC": "Valor da Base de Cálculo",
+    "pICMS": "Alíquota do ICMS",
+    "vICMS": "Valor do ICMS",
+    "vNF": "Valor Total da NF-e",
+    "modFrete": "Modalidade do Frete",
+    "tPag": "Meio de Pagamento",
+    "vPag": "Valor Pago",
+    "infCpl": "Informações Complementares"
+}
+
+class PyNFEService:    
     def __init__(self):
         pass
 
@@ -45,20 +99,24 @@ class PyNFEService:
         assinador = AssinaturaA1(cert_path, senha)
         return assinador.assinar(xml_arvore)
 
-    def _parse_sefaz_response(self, resposta_comunicacao):
+    def _parse_sefaz_response(self, resposta_comunicacao, xml_enviado=None):
         """
-        Extrai os dados da tupla de retorno da ComunicacaoSefaz.
-        Lida com o fato de a resposta vir como um objeto de retorno ou tupla.
+        Extrai os dados da resposta SEFAZ. Se houver erro de schema (225),
+        tenta identificar a tag causadora usando o xml_enviado.
         """
         try:
-            # A ComunicacaoSefaz costuma retornar (Sucesso/Erro, ResponseObject)
+            # 1. Identificação do alvo (Response ou Objeto XML)
             if isinstance(resposta_comunicacao, tuple) and len(resposta_comunicacao) > 1:
-                raw_xml_text = resposta_comunicacao[1].text
+                alvo = resposta_comunicacao[1]
             else:
-                # Fallback se retornar o XML direto
-                raw_xml_text = etree.tostring(resposta_comunicacao, encoding='unicode')
+                alvo = resposta_comunicacao
 
-            # Limpeza de caracteres ilegais
+            if hasattr(alvo, 'text'):
+                raw_xml_text = alvo.text
+            else:
+                raw_xml_text = etree.tostring(alvo, encoding='unicode')
+
+            # 2. Parsing do XML de retorno
             xml_limpo = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', raw_xml_text)
             tree = etree.fromstring(xml_limpo.encode('utf-8'))
             
@@ -66,9 +124,16 @@ class PyNFEService:
                 res = tree.xpath(f"//*[local-name() = '{tag}']")
                 return res[0].text if res else ''
 
+            cStat = find('cStat')
+            xMotivo = find('xMotivo')
+
+            # 3. Lógica Especial para Erro de Schema (225)
+            if cStat == '225' and xml_enviado:
+                xMotivo = self._decifrar_erro_schema(xMotivo, xml_enviado)
+
             return {
-                "cStat": find('cStat'),
-                "xMotivo": find('xMotivo'),
+                "cStat": cStat,
+                "xMotivo": xMotivo,
                 "chNFe": find('chNFe'),
                 "nProt": find('nProt'),
                 "raw_xml": raw_xml_text
@@ -77,10 +142,97 @@ class PyNFEService:
             return {
                 "cStat": "999",
                 "xMotivo": f"Erro no parser da resposta SEFAZ: {str(e)}",
-                "chNFe": "",
-                "nProt": "",
-                "raw_xml": ""
+                "chNFe": "", "nProt": "", "raw_xml": ""
             }
+
+    def _decifrar_erro_schema(self, mensagem, xml_enviado):
+        """Helper privado para injetar a tag suspeita via triangulação de valor/coluna."""
+        try:
+            import re
+            match_coluna = re.search(r'columnNumber:\s*(\d+)', mensagem)
+            if not match_coluna: 
+                return mensagem
+            
+            coluna = int(match_coluna.group(1))
+            
+            # Serializa com unicode para evitar erro de bytes e manter minificado
+            if hasattr(xml_enviado, 'tag'):
+                xml_str = etree.tostring(xml_enviado, encoding='unicode')
+            elif isinstance(xml_enviado, bytes):
+                xml_str = xml_enviado.decode('utf-8')
+            else:
+                xml_str = str(xml_enviado)
+            
+            tag_suspeita = None
+            valor_tag = "..."
+
+            # ==========================================
+            # TÁTICA 1: O erro entregou o valor? (ex: Value '0')
+            # ==========================================
+            match_valor = re.search(r"Value\s*'([^']+)'", mensagem)
+            if match_valor:
+                valor_invalido = match_valor.group(1)
+                
+                # Procura TODAS as tags que tenham exatamente esse valor (ex: <CRT>0</CRT> ou <idDest>0</idDest>)
+                padrao_tags = re.compile(rf'<([a-zA-Z0-9_]+)[^>]*>{re.escape(valor_invalido)}</\1>')
+                
+                menor_distancia = float('inf')
+                # Acha a que está geograficamente mais perto da "coluna" reportada
+                for m in padrao_tags.finditer(xml_str):
+                    distancia = abs(m.start() - coluna)
+                    if distancia < menor_distancia:
+                        menor_distancia = distancia
+                        tag_suspeita = m.group(1)
+                        valor_tag = valor_invalido
+
+            # ==========================================
+            # TÁTICA 2: O erro entregou o nome do elemento? (ex: element 'xProd')
+            # ==========================================
+            if not tag_suspeita:
+                match_elemento = re.search(r"(?:element|elemento)\s*'([^']+)'", mensagem, re.IGNORECASE)
+                if match_elemento:
+                    tag_suspeita = match_elemento.group(1).split(':')[-1] # Limpa namespace se houver
+                    
+                    # Tenta capturar qual era o valor dela no XML
+                    m_conteudo = re.search(rf'<{tag_suspeita}[^>]*>(.*?)</{tag_suspeita}>', xml_str)
+                    if m_conteudo:
+                        valor_tag = m_conteudo.group(1)
+
+            # ==========================================
+            # TÁTICA 3: Fallback (Última tag aberta antes da coluna)
+            # ==========================================
+            if not tag_suspeita:
+                # Corta a string um pouquinho depois da coluna para engolir a tag atual
+                corte = xml_str[:coluna + 10]
+                # Pega apenas tags de abertura
+                tags_abertas = re.findall(r'<([a-zA-Z0-9_]+)[^>/]*>', corte)
+                
+                if tags_abertas:
+                    tag_suspeita = tags_abertas[-1]
+                    m_conteudo = re.search(rf'<{tag_suspeita}[^>]*>(.*?)</{tag_suspeita}>', xml_str)
+                    if m_conteudo:
+                        valor_tag = m_conteudo.group(1)
+
+            # Se mesmo assim não achou nada, devolve a mensagem original
+            if not tag_suspeita:
+                return mensagem
+
+            # ==========================================
+            # MONTAGEM DO RETORNO (Com ou Sem Dicionário)
+            # ==========================================
+            trecho_exibicao = f"<{tag_suspeita}>{valor_tag}</{tag_suspeita}>"
+            significado = DICIONARIO_TAGS_NFE.get(tag_suspeita)
+
+            if significado:
+                alerta = f"⚠️ Falha de Preenchimento: Verifique o campo '{significado}' ({trecho_exibicao}). O valor informado é inválido ou incompatível."
+            else:
+                alerta = f"⚠️ Falha de Preenchimento: Verifique a tag ({trecho_exibicao}). O valor informado é inválido ou incompatível."
+            
+            return f"{alerta}\n\n--- Retorno Original SEFAZ ---\n{mensagem}"
+
+        except Exception:
+            # Blindagem: qualquer problema na extração não derruba a aplicação
+            return mensagem
     
     def _validar_dados_emissao(self, company_info: dict, payload: dict):
         """Validação Fail Fast antes de iniciar o processamento da nota"""
@@ -257,7 +409,7 @@ class PyNFEService:
                 else:
                     # REJEIÇÃO SEFAZ
                     response_bruto = resposta[1] if isinstance(resposta, tuple) else resposta
-                    retorno_erro = self._parse_sefaz_response(response_bruto)
+                    retorno_erro = self._parse_sefaz_response(response_bruto, xml_enviado=xml_pronto)
                     cStat_erro = int(retorno_erro.get('cStat') or 0)
                     
                     # ----------------------------------------------------
@@ -411,7 +563,7 @@ class PyNFEService:
                 else:
                     # REJEIÇÃO OU DUPLICIDADE (Status 204, etc)
                     response_bruto = resposta[1] if isinstance(resposta, tuple) else resposta
-                    retorno_sefaz = self._parse_sefaz_response(response_bruto)
+                    retorno_sefaz = self._parse_sefaz_response(response_bruto, xml_enviado=xml_arvore)
                     
                     c_stat = retorno_sefaz.get('cStat')
                     # 204 = Duplicidade (A nota já está na SEFAZ, tratamos como sucesso para o NestJS)
@@ -524,18 +676,45 @@ class PyNFEService:
                         evento=xml_assinado
                     )
 
-                retorno = self._parse_sefaz_response(resposta_bruta)
+                retorno = self._parse_sefaz_response(resposta_bruta, xml_enviado=xml_assinado)
 
+                # =========================================================
+                # DEEP PARSING: Buscar status real do Evento (ignorar o 128)
+                # =========================================================
+                if nome_evento != 'InutilizacaoBuilder':
+                    try:
+                        tree = etree.fromstring(retorno['raw_xml'].encode('utf-8'))
+                        
+                        # Busca o cStat, nProt e xMotivo de DENTRO do retEvento
+                        cStat_evento = tree.xpath("//*[local-name() = 'retEvento']//*[local-name() = 'cStat']")
+                        nProt_evento = tree.xpath("//*[local-name() = 'retEvento']//*[local-name() = 'nProt']")
+                        xMotivo_evento = tree.xpath("//*[local-name() = 'retEvento']//*[local-name() = 'xMotivo']")
+
+                        if cStat_evento:
+                            retorno['cStat'] = cStat_evento[0].text
+                        
+                        if nProt_evento:
+                            retorno['nProt'] = nProt_evento[0].text
+                            
+                        if xMotivo_evento:
+                            retorno['xMotivo'] = xMotivo_evento[0].text
+                    except Exception as parse_err:
+                        print(f"Erro ao fazer deep parse do evento: {parse_err}")
+
+                # Mantemos o envio do XML assinado original para o seu frontend
                 xml_final_bytes = etree.tostring(xml_assinado, encoding='utf-8')
                 xml_final_base64 = base64.b64encode(xml_final_bytes).decode('utf-8')
 
+                # Sucesso apenas se o evento foi registrado (135) ou CC-e vinculada (136)
+                is_success = retorno['cStat'] in ['135', '136']
+
                 return {
-                    "status": "authorized" if retorno['cStat'] in ['102', '128', '135', '136'] else "rejected",
-                    "protocol": retorno['nProt'],
+                    "status": "authorized" if is_success else "rejected",
+                    "protocol": retorno.get('nProt', ''),
                     "xmlBase64": xml_final_base64,
                     "sefaz": {
                         "cStat": int(retorno['cStat'] or 0),
-                        "message": retorno['xMotivo']
+                        "message": retorno.get('xMotivo', '')
                     }
                 }
         except Exception as e:

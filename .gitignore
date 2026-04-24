@@ -51,3 +51,4 @@ dist/
 Thumbs.db
 .DS_Store
 logs/
+storage/

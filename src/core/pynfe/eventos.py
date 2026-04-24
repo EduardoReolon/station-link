@@ -1,3 +1,4 @@
+from datetime import datetime
 from lxml import etree
 from pynfe.entidades.evento import EventoCancelarNota, EventoCartaCorrecao
 from pynfe.utils.flags import CODIGOS_ESTADOS, NAMESPACE_NFE, VERSAO_PADRAO
@@ -17,16 +18,13 @@ class EventoBuilderBase:
         self.homologacao = (self.ambiente == AmbienteEmissao.HOMOLOGACAO.value)
 
     def _serializar_e_limpar(self, entidade, namespace_tag: str):
-        """Padroniza a geração do XML (Mock -> Serializador -> Limpeza LXML)"""
+        """Padroniza a geração do XML chamando o método correto da biblioteca"""
+        
         serializador = SerializacaoXML(FonteMemoria(entidade), homologacao=self.homologacao)
-        lote_root = serializador.exportar()
         
-        ns = {"nfe": "http://www.portalfiscal.inf.br/nfe"}
-        no_principal = lote_root.find(f".//nfe:{namespace_tag}", namespaces=ns)
+        # Em vez de exportar() (que busca NFe), usamos o serializar_evento() passando a tag
+        no_principal = serializador.serializar_evento(entidade, tag_raiz=namespace_tag, retorna_string=False)
         
-        if no_principal is None:
-            no_principal = lote_root
-
         xml_bytes = etree.tostring(no_principal, encoding='utf-8')
         return xml_bytes.decode('utf-8', errors='replace')
 
@@ -39,9 +37,10 @@ class CancelamentoBuilder(EventoBuilderBase):
             uf=self.uf,
             chave=self.payload.get('chave'),
             protocolo=self.payload.get('protocolo'),
-            justificativa=self.payload.get('justificativa', '').strip()
+            justificativa=self.payload.get('justificativa', '').strip(),
+            data_emissao=datetime.now()
         )
-        return self._serializar_e_limpar(evento, "envEvento")
+        return self._serializar_e_limpar(evento, "evento")
 
 
 class CCeBuilder(EventoBuilderBase):

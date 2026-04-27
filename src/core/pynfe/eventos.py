@@ -50,9 +50,10 @@ class CCeBuilder(EventoBuilderBase):
             uf=self.uf,
             chave=self.payload.get('chave'),
             n_seq_evento=int(self.payload.get('sequencia', 1)), # Nome correto do atributo na biblioteca
-            correcao=self.payload.get('correcao', '').strip()
+            correcao=self.payload.get('correcao', '').strip(),
+            data_emissao=datetime.now()
         )
-        return self._serializar_e_limpar(evento, "envEvento")
+        return self._serializar_e_limpar(evento, "evento")
 
 
 class InutilizacaoBuilder(EventoBuilderBase):

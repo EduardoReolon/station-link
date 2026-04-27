@@ -1,3 +1,4 @@
+import base64
 import datetime
 from decimal import Decimal, ROUND_HALF_UP
 import hashlib
@@ -13,6 +14,25 @@ from pynfe.entidades.notafiscal import NotaFiscal
 from pynfe.entidades.cliente import Cliente
 from pynfe.processamento.serializacao import SerializacaoXML
 from pynfe.entidades.transportadora import Transportadora
+
+class SerializacaoSigma(SerializacaoXML):
+    def _serializar_responsavel_tecnico(self, responsavel_tecnico, tag_raiz="infRespTec", retorna_string=True):
+        raiz = etree.Element(tag_raiz)
+        etree.SubElement(raiz, "CNPJ").text = responsavel_tecnico.cnpj
+        etree.SubElement(raiz, "xContato").text = responsavel_tecnico.contato
+        etree.SubElement(raiz, "email").text = responsavel_tecnico.email
+        etree.SubElement(raiz, "fone").text = responsavel_tecnico.fone
+
+        # AQUI: Lemos as propriedades novas e injetamos as tags no momento da construção nativa
+        if hasattr(responsavel_tecnico, 'idCSRT') and responsavel_tecnico.idCSRT:
+            etree.SubElement(raiz, "idCSRT").text = str(responsavel_tecnico.idCSRT).zfill(2)
+        if hasattr(responsavel_tecnico, 'hashCSRT') and responsavel_tecnico.hashCSRT:
+            etree.SubElement(raiz, "hashCSRT").text = responsavel_tecnico.hashCSRT
+
+        if retorna_string:
+            return etree.tostring(raiz, encoding="unicode", pretty_print=True)
+        else:
+            return raiz
 
 
 # --- ENUMS E CONSTANTES ---
@@ -42,6 +62,7 @@ class ModalidadeFrete(Enum):
 
 class FormaPagamentoDefault(Enum):
     DINHEIRO = '01'
+    OUTRO = '99'
 
 class RegimeTributario(Enum):
     SIMPLES_NACIONAL = '1'
@@ -158,14 +179,30 @@ class NFeBuilder:
             indicador_destino=id_destino,
         )
 
+        return nfe
+    
+    def _adicionar_responsavel_tecnico(self, nfe: NotaFiscal):
         dev_info = self.company.get('developer', {})
+        id_csrt = dev_info.get('idCsrt')
+        csrt_string = dev_info.get('csrt')
+        hash_csrt = ""
+
+        # Calcula o hash aproveitando a chave gerada dinamicamente pelo PyNFe
+        if id_csrt and csrt_string:
+            # Pega a chave gerada de 44 digitos (removendo o prefixo "NFe")
+            chave_acesso = nfe.identificador_unico.replace('NFe', '')
+            concat = csrt_string + chave_acesso
+            sha1_hash = hashlib.sha1(concat.encode('utf-8')).digest()
+            hash_csrt = base64.b64encode(sha1_hash).decode('utf-8')
+        
         nfe.adicionar_responsavel_tecnico(
             cnpj=dev_info.get('cnpj', ''),
             contato=dev_info.get('contato', ''),
             email=dev_info.get('email', ''),
-            fone=dev_info.get('fone', '')
+            fone=dev_info.get('fone', ''),
+            idCSRT=id_csrt,
+            hashCSRT=hash_csrt
         )
-        return nfe
 
     def _adicionar_emitente(self, nfe: NotaFiscal):
         endereco = self.company.get('address', {})
@@ -364,14 +401,21 @@ class NFeBuilder:
                 ind_total=1,
                 valor_tributos_aprox=valor_tributos,
                 **kwargs_icms,
-                pis_modalidade=str(item.get('cstPis') or def_pis_cofins).zfill(2),
-                pis_base_calculo=D(item.get('pisBase', 0)),
-                pis_aliquota=D(item.get('pisRate', 0)),
+                pis_situacao_tributaria=str(item.get('cstPis') or def_pis_cofins).zfill(2),
+                pis_modalidade = str(item.get('cstPis') or def_pis_cofins).zfill(2),
+                pis_valor_base_calculo=D(item.get('pisBase', 0)),
+                pis_aliquota_percentual=D(item.get('pisRate', 0)),
                 pis_valor=D(item.get('pisValue', 0)),
-                cofins_modalidade=str(item.get('cstCofins') or def_pis_cofins).zfill(2),
-                cofins_base_calculo=D(item.get('cofinsBase', 0)),
-                cofins_aliquota=D(item.get('cofinsRate', 0)),
-                cofins_valor=D(item.get('cofinsValue', 0))
+                cofins_situacao_tributaria=str(item.get('cstCofins') or def_pis_cofins).zfill(2),
+                cofins_modalidade =str(item.get('cstCofins') or def_pis_cofins).zfill(2),
+                cofins_valor_base_calculo=D(item.get('cofinsBase', 0)),
+                cofins_aliquota_percentual=D(item.get('cofinsRate', 0)),
+                cofins_valor=D(item.get('cofinsValue', 0)),
+                ipi_situacao_tributaria='99',
+                ipi_codigo_enquadramento='999',
+                ipi_valor_base_calculo=D(0),
+                ipi_aliquota=D(0),
+                ipi_valor_ipi=D(0)
             )
         
         nfe.totais_tributos_aproximado = totais_tributos_aproximado
@@ -410,12 +454,7 @@ class NFeBuilder:
         pagamentos = self.payload.get('payments', [])
         valor_troco = total_nota
         
-        if not pagamentos:
-            nfe.adicionar_pagamento(
-                t_pag=FormaPagamentoDefault.DINHEIRO.value,
-                v_pag=D('0.00')
-            )
-        else:
+        if pagamentos:
             for pag in pagamentos:
                 forma = str(pag.get('method', FormaPagamentoDefault.DINHEIRO.value)).zfill(2) 
                 valor = D(str(pag.get('value', 0)))
@@ -435,6 +474,13 @@ class NFeBuilder:
                         kwargs_pag['c_aut'] = str(pag.get('auth', ''))
 
                 nfe.adicionar_pagamento(**kwargs_pag)
+        
+        if valor_troco > 0:
+            nfe.adicionar_pagamento(
+                t_pag=FormaPagamentoDefault.OUTRO.value,
+                v_pag=D(valor_troco),
+                x_pag="Pagamento futuro",
+            )
                 
         valor_troco = valor_troco * -1
         nfe.valor_troco = valor_troco if valor_troco > 0 else D('0.00')
@@ -447,6 +493,7 @@ class NFeBuilder:
         total_nota = self._adicionar_itens(nfe)
         self._adicionar_transporte(nfe)
         self._adicionar_pagamentos(nfe, total_nota)
+        self._adicionar_responsavel_tecnico(nfe)
 
         ambiente = int(self.payload.get('environment', AmbienteEmissao.HOMOLOGACAO.value))
 
@@ -454,7 +501,7 @@ class NFeBuilder:
         is_contingencia = self.payload.get('isContingency', False)
         justificativa = self.payload.get('justificativaContingencia')
         
-        serializador = SerializacaoXML(
+        serializador = SerializacaoSigma(
             FonteMemoria(nfe),
             homologacao=(ambiente == AmbienteEmissao.HOMOLOGACAO.value),
             contingencia=justificativa if is_contingencia else None
@@ -482,6 +529,29 @@ class NFeBuilder:
             dest_node = root.find(".//nfe:dest", busca_ns)
             if dest_node is not None:
                 dest_node.getparent().remove(dest_node)
+        
+        # --- INÍCIO DA INJEÇÃO DO CSRT ---
+        # inf_resp_tec = root.find(".//nfe:infRespTec", busca_ns)
+        # if inf_resp_tec is not None:
+        #     inf_nfe = root.find(".//nfe:infNFe", busca_ns)
+        #     chave_acesso = ""
+        #     if inf_nfe is not None and 'Id' in inf_nfe.attrib:
+        #         chave_acesso = inf_nfe.attrib['Id'].replace('NFe', '')
+
+        #     dev_info = self.company.get('developer', {})
+        #     id_csrt = dev_info.get('idCsrt')
+        #     csrt_string = dev_info.get('csrt')
+
+        #     if csrt_string and chave_acesso and id_csrt:
+        #         # Calculando o hashCSRT
+        #         concat = csrt_string + chave_acesso
+        #         sha1_hash = hashlib.sha1(concat.encode('utf-8')).digest()
+        #         hash_csrt = base64.b64encode(sha1_hash).decode('utf-8')
+
+        #         # Injetando as tags
+        #         etree.SubElement(inf_resp_tec, "{http://www.portalfiscal.inf.br/nfe}idCSRT").text = str(id_csrt).zfill(2)
+        #         etree.SubElement(inf_resp_tec, "{http://www.portalfiscal.inf.br/nfe}hashCSRT").text = hash_csrt
+        # --- FIM DA INJEÇÃO DO CSRT ---
 
         xml_bytes = etree.tostring(root, encoding='utf-8')
         xml_injetado = xml_bytes.decode('utf-8', errors='replace')

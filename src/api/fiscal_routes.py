@@ -79,6 +79,9 @@ def init_station():
         "stationId": "uuid-da-estacao",
         "developer": {
             "cnpj": "12345678000199",
+            "contato": "nome",
+            "email": "email@email.com",
+            "fone": "1154985549",
             "idCsrt": "01",
             "csrt": "G8063VRTNDMO886SF..." 
         },
@@ -345,7 +348,8 @@ def emit_document():
         salvar_pendencia(transacao_id, resultado)
 
         # Quando a nota for autorizada, basta chamar passando os dados
-        salvar_xml_em_disco(company_id, resultado['accessKey'], resultado['xmlBase64'])
+        if 'accessKey' in resultado:
+            salvar_xml_em_disco(company_id, resultado['accessKey'], resultado['xmlBase64'])
         
         return jsonify(resultado)
 

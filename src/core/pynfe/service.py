@@ -307,7 +307,6 @@ class PyNFEService:
             xml_string_base, totais = builder.gerar_xml_base()
             xml_injetado = builder.injetar_tags_reforma(xml_string_base)
             xml_arvore = etree.fromstring(xml_injetado.encode('utf-8'))
-            
             xml_assinado = self._assinar_xml(xml_arvore, cert_path, company_info['senha'])
             return xml_assinado, totais
 
@@ -322,11 +321,15 @@ class PyNFEService:
                 
                 xml_assinado, totais_finais = _gerar_e_assinar(payload, cert_path)
 
-                # Gera QR Code (agora para ambos os modelos, online=True)
-                csc = company_info.get('cscProducao' if ambiente == 1 else 'cscHomologacao')
-                csc_id = company_info.get('idCscProducao' if ambiente == 1 else 'idCscHomologacao')
-                gerador_qr = SerializacaoQrcode()
-                xml_pronto = gerador_qr.gerar_qrcode(token=csc_id, csc=csc, xml=xml_assinado, online=True)
+                if modelo == ModeloDocumento.NFCE.value:
+                    # Gera QR Code
+                    csc = company_info.get('cscProducao' if ambiente == 1 else 'cscHomologacao')
+                    csc_id = company_info.get('idCscProducao' if ambiente == 1 else 'idCscHomologacao')
+                    gerador_qr = SerializacaoQrcode()
+                    xml_pronto = gerador_qr.gerar_qrcode(token=csc_id, csc=csc, xml=xml_assinado, online=True)
+                else:
+                    # Para NF-e (Modelo 55), não existe tag infNFeSupl no XML.
+                    xml_pronto = xml_assinado
 
                 comunicacao = self._get_comunicacao(company_info, payload, cert_path)
                 
@@ -343,7 +346,7 @@ class PyNFEService:
                     # ==========================================
                     # FALHA DE REDE: ENTRANDO EM AUTO-CONTINGÊNCIA
                     # ==========================================
-                    if modelo == '65':
+                    if modelo == ModeloDocumento.NFCE.value:
                         print("\n[!] Falha de comunicação com a SEFAZ. Ativando contingência offline para NFC-e...")
                         
                         # Altera o payload para forçar a reconstrução do XML
@@ -660,8 +663,9 @@ class PyNFEService:
                 
                 # Determinamos o modelo (nfe ou nfce) para a biblioteca
                 # O payload pode vir com 'model' (emissão) ou 'modelo' (inutilização)
-                modelo_val = str(payload.get('modelo', payload.get('model', '65')))
-                modelo_label = "nfe" if modelo_val == '55' else "nfce"
+                chave = payload.get('chave', '')
+                modelo_val = chave[20:22]
+                modelo_label = "nfe" if modelo_val == ModeloDocumento.NFE.value else "nfce"
 
                 if nome_evento == 'InutilizacaoBuilder':
                     # Mantemos a lógica customizada para Inutilização para garantir o retorno do XML assinado

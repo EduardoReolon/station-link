@@ -158,7 +158,8 @@ class NFeBuilder:
             id_destino = 1
         else:
             # NF-e (55): Compara a UF da sua empresa com a UF do destinatário
-            uf_cliente = cliente_payload.get('uf', uf_empresa)
+            add_cliente = cliente_payload.get('address')
+            uf_cliente = add_cliente.get('state')
             id_destino = 1 if uf_empresa == uf_cliente else 2
 
         nfe = NotaFiscal(

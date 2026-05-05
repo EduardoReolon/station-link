@@ -106,4 +106,5 @@ def home():
     return render_template('index.html', 
                            fp=security_mgr.machine_fingerprint,
                            sec_source=security_mgr.security_source,
-                           public_key=security_mgr.public_key_pem)
+                           public_key=security_mgr.public_key_pem,
+                           version=get_current_version())

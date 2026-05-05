@@ -62,7 +62,7 @@
         <div class="card">
             <div class="card-header">
                 <h1>🖨️ Station Link</h1>
-                <span style="font-size: 0.8rem; color: #999;">v2.1</span>
+                <span style="font-size: 0.8rem; color: #999;" id="version">-</span>
             </div>
 
             <div class="card-body">
@@ -149,9 +149,11 @@
             const source = document.getElementById('sec-source');
             const fp = document.getElementById('sec-fp');
             const key = document.getElementById('sec-key');
+            const version = document.getElementById('version');
 
             fp.innerText = securityData.fingerprint;
             key.innerText = securityData.public_key.substring(26, 60) + "..."; // Só um trecho
+            version.innerText = `v${securityData.agent_version}`;
 
             if (securityData.security_source === 'HARDWARE_TPM') {
                 dot.style.background = '#28a745'; // Verde

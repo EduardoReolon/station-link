@@ -28,6 +28,7 @@ venv\Scripts\pyinstaller.exe --clean --noconsole --onefile ^
 echo Gerando STATIONLINK...
 venv\Scripts\pyinstaller.exe --clean --noconsole --onefile ^
             --add-data "src\templates;templates" ^
+            --collect-data escpos ^
             --name "StationLink" ^
             src\main.py
 

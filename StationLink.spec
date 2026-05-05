@@ -1,11 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_data_files
+
+datas = [('src\\templates', 'templates')]
+datas += collect_data_files('escpos')
 
 
 a = Analysis(
     ['src\\main.py'],
     pathex=[],
     binaries=[],
-    datas=[('src\\templates', 'templates')],
+    datas=datas,
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

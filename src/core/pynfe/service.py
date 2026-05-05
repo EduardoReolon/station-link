@@ -273,7 +273,7 @@ class PyNFEService:
                 try:
                     # Verifica preço
                     if float(item.get('unitPrice', 0)) <= 0:
-                        erros.append(f"O produto '{nome_prod}' não pode ter valor zero.")
+                        erros.append(f"O produto '{nome_prod}' não pode ter preço zero.")
                     # Verifica quantidade
                     if float(item.get('quantity', 0)) <= 0:
                         erros.append(f"O produto '{nome_prod}' está com quantidade zerada.")

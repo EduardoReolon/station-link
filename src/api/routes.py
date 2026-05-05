@@ -1,7 +1,10 @@
+import os
+import sys
 from flask import Blueprint, jsonify, request, render_template
 from core.security import StationSecurity
 from modules.printer.printer_manager import PrinterManager
 from core.config import SISTEMA
+from core.update_mgr import update_manager
 
 # Instancia os gerenciadores aqui (ou importe as instâncias se preferir criar nos módulos)
 security_mgr = StationSecurity()
@@ -12,12 +15,32 @@ api_bp = Blueprint('api_bp', __name__)
 
 """Controladores (Controllers) da API Flask para comunicação com o front-end e servidor na nuvem."""
 
+def get_current_version():
+    """Descobre onde está o version.txt dependendo se é dev ou prod"""
+    if getattr(sys, 'frozen', False):
+        # Modo Compilado: pega a pasta onde o .exe está rodando
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        # Modo Dev: assume a pasta raiz de onde você rodou 'python src/main.py'
+        base_dir = os.getcwd() 
+        
+    caminho_versao = os.path.join(base_dir, "version.txt")
+    
+    try:
+        if os.path.exists(caminho_versao):
+            with open(caminho_versao, 'r') as f:
+                return f.read().strip()
+    except Exception:
+        pass
+        
+    return "dev"
+
 @api_bp.route('/identity', methods=['GET'])
 def get_identity():
     return jsonify({
         "public_key": security_mgr.public_key_pem,
         "fingerprint": security_mgr.machine_fingerprint,
-        "agent_version": "2.1.0",
+        "agent_version": get_current_version(),
         "platform": SISTEMA,
         "security_source": security_mgr.security_source
     })
@@ -63,6 +86,19 @@ def print_job():
         ok, msg = printer_mgr.print_raw(content, qr_code_url, printer)
         
     return jsonify({"status": "ok" if ok else "error", "error": msg if not ok else None}), 200 if ok else 500
+
+@api_bp.route('/configurar-update', methods=['POST'])
+def configurar_update():
+    data = request.json
+    update_url = data.get('update_url', '') # Ex: https://meusite.com/downloads
+    
+    if not update_url:
+        return jsonify({"status": "error", "error": "URL de atualização não informada"}), 400
+        
+    # Salva a URL e acorda a thread de atualização
+    update_manager.iniciar_verificacao(update_url)
+    
+    return jsonify({"status": "ok"}), 200
 
 @api_bp.route('/')
 def home():

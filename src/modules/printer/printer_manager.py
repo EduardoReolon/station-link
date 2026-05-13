@@ -61,6 +61,35 @@ class PrinterManager:
         Recebe o texto cru, imprime e corta. Usa o hardware da impressora para o QR Code.
         """
         try:
+            # ==========================================
+            # 0. MODO DEBUG: SALVAR EM TXT
+            # ==========================================
+            if printer_name == 'DEBUG_TXT_FILE':
+                import os
+                from datetime import datetime
+
+                # Define a pasta storage/debug_prints na raiz do projeto
+                diretorio_debug = os.path.join(os.getcwd(), 'storage', 'debug_prints')
+                os.makedirs(diretorio_debug, exist_ok=True)
+
+                # Gera um nome único baseado na data/hora exata
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                nome_arquivo = f"print_{timestamp}.txt"
+                caminho_arquivo = os.path.join(diretorio_debug, nome_arquivo)
+
+                # Monta o conteúdo do arquivo
+                conteudo = texto_puro
+                if qr_code_url:
+                    conteudo += f"\n\n[QR CODE: {qr_code_url}]\n"
+                
+                conteudo += "\n[GUILHOTINA / CUT]\n"
+
+                # Salva o arquivo
+                with open(caminho_arquivo, 'w', encoding='utf-8') as f:
+                    f.write(conteudo)
+
+                return True, f"Salvo em modo debug com sucesso: {caminho_arquivo}"
+            
             impressora = None
             sistema = platform.system()
 

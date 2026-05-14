@@ -9,6 +9,7 @@ from core.pynfe.service import pynfe_service
 
 fiscal_bp = Blueprint('fiscal_bp', __name__)
 PENDING_FILE = os.path.join(os.getcwd(), 'logs', 'pendencias.json')
+os.makedirs(os.path.dirname(PENDING_FILE), exist_ok=True)
 
 def salvar_xml_em_disco(company_id: str, access_key: str, xml_base64: str, event_type: str = None, sequence: str = None):
     """

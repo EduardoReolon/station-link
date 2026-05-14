@@ -153,14 +153,15 @@ class NFeBuilder:
         document_id = self.payload.get('documentId')
         codigo_seguro = gerar_cnf_por_uuid(document_id)
 
-        if modelo == ModeloDocumento.NFCE:
+        if modelo == ModeloDocumento.NFCE.value:
             # NFC-e é obrigatoriamente operação presencial/interna no estado
             id_destino = 1
         else:
             # NF-e (55): Compara a UF da sua empresa com a UF do destinatário
-            add_cliente = cliente_payload.get('address')
+            add_cliente = cliente_payload.get('address') or {}
             uf_cliente = add_cliente.get('state')
-            id_destino = 1 if uf_empresa == uf_cliente else 2
+            mesmo_estado = uf_cliente == uf_empresa or not uf_cliente
+            id_destino = 1 if mesmo_estado else 2
 
         nfe = NotaFiscal(
             uf=uf_empresa,
@@ -469,9 +470,10 @@ class NFeBuilder:
                 if forma in ['03', '04', '17']:
                     kwargs_pag['tp_integra'] = str(pag.get('integration', '2'))
                     
+                    kwargs_pag['t_band'] = str(pag.get('brand', '99')).zfill(2)
+                    
                     if kwargs_pag['tp_integra'] == '1' and pag.get('cnpj'):
                         kwargs_pag['cnpj'] = str(pag.get('cnpj'))
-                        kwargs_pag['t_band'] = str(pag.get('brand', '99'))
                         kwargs_pag['c_aut'] = str(pag.get('auth', ''))
 
                 nfe.adicionar_pagamento(**kwargs_pag)

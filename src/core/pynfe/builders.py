@@ -392,6 +392,8 @@ class NFeBuilder:
                 ean_tributavel=str(item.get('gtin') or 'SEM GTIN'),
                 descricao=descricao,
                 ncm=str(item.get('ncm', '00000000')),
+                cest=str(item.get('cest')) if item.get('cest') else None,
+                cClassTrib=str(item.get('cClassTrib')) if item.get('cClassTrib') else None,
                 cfop=str(item.get('cfop') or def_cfop),
                 unidade_comercial=str(item.get('unit', 'UN')),
                 quantidade_comercial=qtd,
